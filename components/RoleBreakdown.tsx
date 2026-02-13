@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   Search, Stethoscope, Users, Plane, HeartPulse, 
   ChevronRight, Info, Calendar, PhoneCall, ShieldCheck,
@@ -7,6 +7,12 @@ import {
 
 const RoleBreakdown: React.FC = () => {
   const [perspective, setPerspective] = useState<'career' | 'patient'>('career');
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState(0);
+  
+  const containerRef = useRef<HTMLDivElement>(null);
+  const sliderRef = useRef<HTMLDivElement>(null);
+  const startXRef = useRef<number>(0);
 
   const coordinatorJourney = [
     {
@@ -64,6 +70,80 @@ const RoleBreakdown: React.FC = () => {
 
   const activeJourney = perspective === 'career' ? coordinatorJourney : patientJourney;
 
+  const handlePointerDown = (e: React.PointerEvent) => {
+    setIsDragging(true);
+    startXRef.current = e.clientX;
+    // Capture pointer to ensure we get events even if cursor leaves the element
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!isDragging || !sliderRef.current) return;
+    
+    const delta = e.clientX - startXRef.current;
+    const sliderWidth = sliderRef.current.offsetWidth;
+    
+    // Calculate potential offset
+    // If starting at 'career' (0), we can go right up to sliderWidth
+    // If starting at 'patient' (sliderWidth), we can go left down to -sliderWidth
+    
+    if (perspective === 'career') {
+        const clamped = Math.min(Math.max(delta, 0), sliderWidth);
+        setDragOffset(clamped);
+    } else {
+        const clamped = Math.min(Math.max(delta, -sliderWidth), 0);
+        setDragOffset(clamped);
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent) => {
+    if (!isDragging) return;
+    setIsDragging(false);
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+
+    if (!sliderRef.current) return;
+    const sliderWidth = sliderRef.current.offsetWidth;
+    const threshold = sliderWidth * 0.25; // 25% drag to swap
+
+    if (perspective === 'career') {
+        if (dragOffset > threshold) {
+            setPerspective('patient');
+        }
+    } else {
+        if (dragOffset < -threshold) {
+            setPerspective('career');
+        }
+    }
+    setDragOffset(0);
+  };
+
+  // Calculate dynamic transform for the slider
+  // If not dragging, we rely on the CSS class toggle (translate-x-0 or translate-x-full)
+  // If dragging, we use inline style to override
+  const getSliderStyle = () => {
+    if (!isDragging) {
+        return { 
+            transform: perspective === 'patient' ? 'translateX(100%)' : 'translateX(0%)' 
+        };
+    }
+    
+    // When dragging, we are calculating pixel offsets relative to start position
+    // BUT 'translate-x-full' is 100%. Mixing pixels and percentages in transform is tricky if we don't know the base pixel value.
+    // Ideally we use pixels for everything when dragging.
+    // If perspective is patient, start at 100% (which is sliderWidth approx) + dragOffset
+    // But getting exact sliderWidth in render for initial position might be jittery if we didn't measure it yet.
+    // Fortunately we measure it in handlePointerMove.
+    
+    // Fallback: If we don't have measurements yet (shouldn't happen during drag), default to 0.
+    // Actually, simple trick: use calc().
+    // Career: calc(0% + {dragOffset}px)
+    // Patient: calc(100% + {dragOffset}px)
+    return {
+        transform: `translateX(calc(${perspective === 'patient' ? '100%' : '0%'} + ${dragOffset}px))`,
+        transition: 'none'
+    };
+  };
+
   return (
     <section className="py-24 px-4 md:px-8 max-w-7xl mx-auto scroll-mt-32" id="responsibilities">
       <div className="text-center mb-16 relative z-10">
@@ -76,22 +156,41 @@ const RoleBreakdown: React.FC = () => {
         </p>
       </div>
 
-      {/* Portal Toggle */}
-      <div className="flex justify-center mb-20">
-        <div className="bg-slate-100 dark:bg-slate-900 p-2 rounded-[2.5rem] flex items-center shadow-inner gap-2">
+      {/* Slidable Perspective Toggle */}
+      <div className="flex justify-center mb-20 px-4">
+        <div 
+          ref={containerRef}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          // Prevent default touch actions (scrolling) only on the slider area
+          className="relative bg-slate-100 dark:bg-slate-900 p-1.5 rounded-[2.5rem] flex items-center shadow-inner w-full max-w-2xl overflow-hidden group cursor-pointer touch-none select-none"
+        >
+          {/* The Slider Background */}
+          <div 
+            ref={sliderRef}
+            style={getSliderStyle()}
+            className={`absolute top-1.5 left-1.5 h-[calc(100%-0.75rem)] w-[calc(50%-0.375rem)] bg-white dark:bg-slate-800 rounded-[2.2rem] shadow-xl ${!isDragging ? 'transition-transform duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]' : ''}`}
+          />
+          
           <button 
-            onClick={() => setPerspective('career')}
-            className={`flex items-center gap-3 px-10 py-4 rounded-[2.2rem] text-lg font-bold transition-all duration-500 ${perspective === 'career' ? 'bg-white dark:bg-slate-800 text-medical-700 dark:text-medical-400 shadow-xl scale-105' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'}`}
+            onClick={() => !isDragging && setPerspective('career')}
+            className={`relative z-10 flex-1 flex items-center justify-center gap-3 px-6 py-4 rounded-[2.2rem] text-sm md:text-lg font-bold transition-colors duration-500 outline-none focus-visible:ring-2 focus-visible:ring-medical-500 ${
+              perspective === 'career' ? 'text-medical-700 dark:text-medical-400' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+            }`}
           >
-            <GraduationCap className="w-6 h-6" />
-            Career Aspirant
+            <GraduationCap className={`w-5 h-5 md:w-6 md:h-6 transition-transform duration-500 ${perspective === 'career' ? 'scale-110' : 'scale-90 opacity-70'}`} />
+            <span className="pointer-events-none">Career Aspirant</span>
           </button>
+          
           <button 
-            onClick={() => setPerspective('patient')}
-            className={`flex items-center gap-3 px-10 py-4 rounded-[2.2rem] text-lg font-bold transition-all duration-500 ${perspective === 'patient' ? 'bg-white dark:bg-slate-800 text-vibrant-teal dark:text-vibrant-teal shadow-xl scale-105' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'}`}
+            onClick={() => !isDragging && setPerspective('patient')}
+            className={`relative z-10 flex-1 flex items-center justify-center gap-3 px-6 py-4 rounded-[2.2rem] text-sm md:text-lg font-bold transition-colors duration-500 outline-none focus-visible:ring-2 focus-visible:ring-medical-500 ${
+              perspective === 'patient' ? 'text-vibrant-teal dark:text-vibrant-teal' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+            }`}
           >
-            <Users className="w-6 h-6" />
-            Patient & Family
+            <Users className={`w-5 h-5 md:w-6 md:h-6 transition-transform duration-500 ${perspective === 'patient' ? 'scale-110' : 'scale-90 opacity-70'}`} />
+            <span className="pointer-events-none">Patient & Family</span>
           </button>
         </div>
       </div>
@@ -123,7 +222,7 @@ const RoleBreakdown: React.FC = () => {
 
         {/* Deep Dive Sidebar */}
         <div className="lg:col-span-4">
-          <div className={`h-full rounded-[3rem] p-10 flex flex-col justify-between relative overflow-hidden text-white ${perspective === 'career' ? 'bg-slate-900 dark:bg-slate-900/80' : 'bg-emerald-900 dark:bg-emerald-900/80'}`}>
+          <div className={`h-full rounded-[3rem] p-10 flex flex-col justify-between relative overflow-hidden text-white transition-colors duration-500 ${perspective === 'career' ? 'bg-slate-900 dark:bg-slate-900/80' : 'bg-emerald-900 dark:bg-emerald-900/80'}`}>
             <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -translate-y-12 translate-x-12 blur-2xl"></div>
             <div className="relative z-10">
               <h4 className="text-3xl font-black mb-8 leading-tight">
@@ -174,9 +273,15 @@ const RoleBreakdown: React.FC = () => {
               When an organ is procured, the clock starts. Experience the high-stakes logistics of the 4 to 24-hour window that determines transplant success.
             </p>
           </div>
-          <a href="#mentor" className="bg-white text-medical-900 px-10 py-5 rounded-2xl font-black hover:scale-105 transition-all shadow-xl hover:shadow-medical-400/30 whitespace-nowrap">
+          <button 
+            onClick={() => {
+              const el = document.getElementById('mentor');
+              el?.scrollIntoView({ behavior: 'smooth' });
+            }}
+            className="bg-white text-medical-900 px-10 py-5 rounded-2xl font-black hover:scale-105 transition-all shadow-xl hover:shadow-medical-400/30 whitespace-nowrap"
+          >
             Ask the AI Mentor More
-          </a>
+          </button>
         </div>
       </div>
     </section>
